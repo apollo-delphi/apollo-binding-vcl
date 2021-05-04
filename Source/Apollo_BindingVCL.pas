@@ -6,6 +6,7 @@ uses
   Apollo_Binding_Core,
   System.Classes,
   System.Rtti,
+  Vcl.ComCtrls,
   Vcl.Controls,
   Vcl.ExtCtrls,
   Vcl.StdCtrls;
@@ -16,6 +17,7 @@ type
     procedure EditOnChange(Sender: TObject);
     procedure SetToEdit(aEdit: TEdit; const aValue: string; var aBindItem: TBindItem);
     procedure SetToLabeledEdit(aLabeledEdit: TLabeledEdit; const aValue: string; var aBindItem: TBindItem);
+    procedure SetToRichEdit(aRichEdit: TRichEdit; const aValue: string; var aBindItem: TBindItem);
   protected
     procedure BindPropertyToControl(aSource: TObject; aRttiProperty: TRttiProperty; aControl: TComponent); override;
     procedure DoBind(aSource: TObject; aControl: TComponent; const aControlNamePrefix: string;
@@ -83,6 +85,9 @@ begin
   if aControl is TLabeledEdit then
     SetToLabeledEdit(TLabeledEdit(aControl), aRttiProperty.GetValue(aSource).AsString, BindItem)
   else
+  if aControl is TRichEdit then
+    SetToRichEdit(TRichEdit(aControl), aRttiProperty.GetValue(aSource).AsString, BindItem)
+  else
     raise Exception.CreateFmt('TBindingVCL: Control class %s does not supported', [aControl.ClassName]);
 end;
 
@@ -144,6 +149,17 @@ begin
     aBindItem.NativeEvent := aLabeledEdit.OnChange;
 
   aLabeledEdit.OnChange := EditOnChange;
+end;
+
+procedure TBindingVCL.SetToRichEdit(aRichEdit: TRichEdit; const aValue: string;
+  var aBindItem: TBindItem);
+begin
+  aRichEdit.Text := aValue;
+
+  if Assigned(aRichEdit.OnChange) then
+    aBindItem.NativeEvent := aRichEdit.OnChange;
+
+  aRichEdit.OnChange := EditOnChange;
 end;
 
 initialization
