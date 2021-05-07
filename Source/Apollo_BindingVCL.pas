@@ -207,7 +207,7 @@ begin
   aBindItem.Control := TreeView;
 
   BindItem := GetFirstBindItem(TreeView);
-  SetToTreeView(TreeView, GetPropValue(BindItem.Source, BindItem.PropName), aTreeNode, aBindItem);
+  SetToTreeView(TreeView, GetPropValue(aBindItem.Source, BindItem.PropName), aTreeNode, aBindItem);
 end;
 
 procedure TBindingVCL.SetToTreeView(aTreeView: TTreeView; const aValue: string;
