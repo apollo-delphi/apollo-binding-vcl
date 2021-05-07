@@ -18,19 +18,23 @@ type
     procedure SetToEdit(aEdit: TEdit; const aValue: string; var aBindItem: TBindItem);
     procedure SetToLabeledEdit(aLabeledEdit: TLabeledEdit; const aValue: string; var aBindItem: TBindItem);
     procedure SetToRichEdit(aRichEdit: TRichEdit; const aValue: string; var aBindItem: TBindItem);
+    procedure SetToTreeView(aTreeView: TTreeView; const aValue: string; aParentNode: TTreeNode; var aBindItem: TBindItem);
+    procedure SetToTreeNode(aTreeNode: TTreeNode; var aBindItem: TBindItem);
+    procedure TreeViewOnEdited(Sender: TObject; Node: TTreeNode; var S: string);
   protected
-    procedure BindPropertyToControl(aSource: TObject; aRttiProperty: TRttiProperty; aControl: TComponent); override;
-    procedure DoBind(aSource: TObject; aControl: TComponent; const aControlNamePrefix: string;
+    procedure BindPropertyToControl(aSource: TObject; aRttiProperty: TRttiProperty; aControl: TObject); override;
+    procedure DoBind(aSource: TObject; aControl: TObject; const aControlNamePrefix: string;
       aRttiProperties: TArray<TRttiProperty>); override;
   end;
 
   TBind = class
   public
-    class function GetBindItem(aControl: TControl; const aIndex: Integer = 0): TBindItem;
-    class function GetSource<T: class>(aControl: TControl; const aIndex: Integer = 0): T;
-    class procedure Bind(aSource: TObject; aRootControl: TWinControl; const aControlNamePrefix: string = '');
+    class function GetBindItem<T: class>(aSource: TObject): TBindItem; overload;
+    class function GetBindItem(aControl: TControl): TBindItem; overload;
+    class function GetSource<T: class>(aControl: TControl): T;
+    class procedure Bind(aSource: TObject; aRootControl: TObject; const aControlNamePrefix: string = '');
     class procedure Notify(aSource: TObject);
-    class procedure SingleBind(aSource: TObject; aControl: TControl; const aIndex: Integer = 0);
+    class procedure SingleBind(aSource: TObject; aControl: TObject);
   end;
 
 var
@@ -44,20 +48,31 @@ uses
 
 { TBind }
 
-class procedure TBind.Bind(aSource: TObject; aRootControl: TWinControl;
+class procedure TBind.Bind(aSource: TObject; aRootControl: TObject;
   const aControlNamePrefix: string);
 begin
   gBindingVCL.Bind(aSource, aRootControl, aControlNamePrefix);
 end;
 
-class function TBind.GetBindItem(aControl: TControl; const aIndex: Integer): TBindItem;
+class function TBind.GetBindItem(aControl: TControl): TBindItem;
 begin
-  Result := gBindingVCL.GetBindItem(aControl, aIndex);
+  Result := gBindingVCL.GetFirstBindItem(aControl);
 end;
 
-class function TBind.GetSource<T>(aControl: TControl; const aIndex: Integer): T;
+class function TBind.GetBindItem<T>(aSource: TObject): TBindItem;
+var
+  BindItem: TBindItem;
+  BindItems: TArray<TBindItem>;
 begin
-  Result := GetBindItem(aControl, aIndex).Source as T;
+  BindItems := gBindingVCL.GetBindItemsBySource(aSource);
+  for BindItem in BindItems do
+    if BindItem.Control.ClassType = T then
+      Exit(BindItem);
+end;
+
+class function TBind.GetSource<T>(aControl: TControl): T;
+begin
+  Result := GetBindItem(aControl).Source as T;
 end;
 
 class procedure TBind.Notify(aSource: TObject);
@@ -65,19 +80,22 @@ begin
   gBindingVCL.Notify(aSource);
 end;
 
-class procedure TBind.SingleBind(aSource: TObject; aControl: TControl; const aIndex: Integer);
+class procedure TBind.SingleBind(aSource: TObject; aControl: TObject);
 begin
-  gBindingVCL.SingleBind(aSource, aControl, aIndex);
+  gBindingVCL.SingleBind(aSource, aControl);
 end;
 
 { TBindingVCL }
 
 procedure TBindingVCL.BindPropertyToControl(aSource: TObject;
-  aRttiProperty: TRttiProperty; aControl: TComponent);
+  aRttiProperty: TRttiProperty; aControl: TObject);
 var
   BindItem: TBindItem;
 begin
-  BindItem := AddBindItem(aSource, aRttiProperty.Name, aControl, 0);
+  if Assigned(aRttiProperty) then
+    BindItem := AddBindItem(aSource, aRttiProperty.Name, aControl)
+  else
+    BindItem := AddBindItem(aSource, '', aControl);
 
   if aControl is TEdit then
     SetToEdit(TEdit(aControl), aRttiProperty.GetValue(aSource).AsString, BindItem)
@@ -88,10 +106,16 @@ begin
   if aControl is TRichEdit then
     SetToRichEdit(TRichEdit(aControl), aRttiProperty.GetValue(aSource).AsString, BindItem)
   else
+  if aControl is TTreeView then
+    SetToTreeView(TTreeView(aControl), aRttiProperty.GetValue(aSource).AsString, nil, BindItem)
+  else
+  if aControl is TTreeNode then
+    SetToTreeNode(TTreeNode(aControl), BindItem)
+  else
     raise Exception.CreateFmt('TBindingVCL: Control class %s does not supported', [aControl.ClassName]);
 end;
 
-procedure TBindingVCL.DoBind(aSource: TObject; aControl: TComponent;
+procedure TBindingVCL.DoBind(aSource: TObject; aControl: TObject;
   const aControlNamePrefix: string; aRttiProperties: TArray<TRttiProperty>);
 var
   ChildControl: TControl;
@@ -99,35 +123,46 @@ var
   i: Integer;
   RttiProperty: TRttiProperty;
 begin
-  Control := aControl as TWinControl;
-
-  for i := 0 to Control.ControlCount - 1 do
+  if aControl is TWinControl then
   begin
-    ChildControl := Control.Controls[i];
+    Control := aControl as TWinControl;
 
-    if ChildControl.InheritsFrom(TWinControl) and
-       (TWinControl(ChildControl).ControlCount > 0)
-    then
-      DoBind(aSource, ChildControl, aControlNamePrefix, aRttiProperties);
+    for i := 0 to Control.ControlCount - 1 do
+    begin
+      ChildControl := Control.Controls[i];
 
-    RttiProperty := GetMatchedSourceProperty(aControlNamePrefix, ChildControl.Name, aRttiProperties);
-    if Assigned(RttiProperty) then
+      if ChildControl.InheritsFrom(TWinControl) and
+         (TWinControl(ChildControl).ControlCount > 0)
+      then
+        DoBind(aSource, ChildControl, aControlNamePrefix, aRttiProperties);
+
+      RttiProperty := GetMatchedSourceProperty(aControlNamePrefix, ChildControl.Name, aRttiProperties);
       BindPropertyToControl(aSource, RttiProperty, ChildControl);
-  end;
+    end;
+
+    RttiProperty := GetMatchedSourceProperty(aControlNamePrefix, Control.Name, aRttiProperties);
+    BindPropertyToControl(aSource, RttiProperty, Control);
+  end
+  else
+    BindPropertyToControl(aSource, nil, aControl);
 end;
 
 procedure TBindingVCL.EditOnChange(Sender: TObject);
 var
   BindItem: TBindItem;
   Edit: TCustomEdit;
+  Method: TMethod;
+  NotifyEvent: TNotifyEvent;
 begin
   Edit := Sender as TCustomEdit;
-  BindItem := GetBindItem(Edit);
-
+  BindItem := GetFirstBindItem(Edit);
   SetPropValue(BindItem.Source, BindItem.PropName, Edit.Text);
 
-  if Assigned(BindItem.NativeEvent) then
-    BindItem.NativeEvent(Sender);
+  if TryGetNativeEvent(Edit, Method) then
+  begin
+    TMethod(NotifyEvent) := Method;
+    NotifyEvent(Sender);
+  end;
 end;
 
 procedure TBindingVCL.SetToEdit(aEdit: TEdit; const aValue: string; var aBindItem: TBindItem);
@@ -135,7 +170,7 @@ begin
   aEdit.Text := aValue;
 
   if Assigned(aEdit.OnChange) then
-    aBindItem.NativeEvent := aEdit.OnChange;
+    SetNativeEvent(aEdit, TMethod(aEdit.OnChange));
 
   aEdit.OnChange := EditOnChange;
 end;
@@ -146,7 +181,7 @@ begin
   aLabeledEdit.Text := aValue;
 
   if Assigned(aLabeledEdit.OnChange) then
-    aBindItem.NativeEvent := aLabeledEdit.OnChange;
+    SetNativeEvent(aLabeledEdit, TMethod(aLabeledEdit.OnChange));
 
   aLabeledEdit.OnChange := EditOnChange;
 end;
@@ -157,9 +192,57 @@ begin
   aRichEdit.Text := aValue;
 
   if Assigned(aRichEdit.OnChange) then
-    aBindItem.NativeEvent := aRichEdit.OnChange;
+    SetNativeEvent(aRichEdit, TMethod(aRichEdit.OnChange));
 
   aRichEdit.OnChange := EditOnChange;
+end;
+
+procedure TBindingVCL.SetToTreeNode(aTreeNode: TTreeNode;
+  var aBindItem: TBindItem);
+var
+  BindItem: TBindItem;
+  TreeView: TTreeView;
+begin
+  TreeView := aTreeNode.TreeView as TTreeView;
+  aBindItem.Control := TreeView;
+
+  BindItem := GetFirstBindItem(TreeView);
+  SetToTreeView(TreeView, GetPropValue(BindItem.Source, BindItem.PropName), aTreeNode, aBindItem);
+end;
+
+procedure TBindingVCL.SetToTreeView(aTreeView: TTreeView; const aValue: string;
+  aParentNode: TTreeNode; var aBindItem: TBindItem);
+var
+  Node: TTreeNode;
+begin
+  Node := aTreeView.Items.AddChild(aParentNode, aValue);
+  Node.Data := aBindItem.Source;
+
+  aBindItem.SecondaryControl := Node;
+
+  if Assigned(aTreeView.OnEdited) then
+    SetNativeEvent(aTreeView, TMethod(aTreeView.OnEdited));
+
+  aTreeView.OnEdited := TreeViewOnEdited;
+end;
+
+procedure TBindingVCL.TreeViewOnEdited(Sender: TObject; Node: TTreeNode;
+  var S: string);
+var
+  BindItem: TBindItem;
+  Method: TMethod;
+  TreeView: TTreeView;
+  TVEditedEvent: TTVEditedEvent;
+begin
+  TreeView := Sender as TTreeView;
+  BindItem := GetFirstBindItem(TreeView);
+  SetPropValue(Node.Data, BindItem.PropName, S);
+
+  if TryGetNativeEvent(TreeView, Method) then
+  begin
+    TMethod(TVEditedEvent) := Method;
+    TVEditedEvent(TreeView, Node, S);
+  end;
 end;
 
 initialization
