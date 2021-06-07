@@ -9,6 +9,7 @@ uses
   Vcl.ComCtrls,
   Vcl.Controls,
   Vcl.ExtCtrls,
+  Vcl.Grids,
   Vcl.StdCtrls;
 
 type
@@ -20,21 +21,26 @@ type
     procedure SetToRichEdit(aRichEdit: TRichEdit; const aValue: string; var aBindItem: TBindItem);
     procedure SetToTreeView(aTreeView: TTreeView; const aValue: string; aParentNode: TTreeNode; var aBindItem: TBindItem);
     procedure SetToTreeNode(aTreeNode: TTreeNode; var aBindItem: TBindItem);
+    procedure SetToStringGrid(aStringGrid: TStringGrid; var aBindItem: TBindItem);
     procedure TreeViewOnEdited(Sender: TObject; Node: TTreeNode; var S: string);
   protected
-    procedure BindPropertyToControl(aSource: TObject; aRttiProperty: TRttiProperty; aControl: TObject); override;
+    procedure BindPropertyToControl(aSource: TObject; aRttiProperty: TRttiProperty;
+      aControl: TObject); override;
     procedure DoBind(aSource: TObject; aControl: TObject; const aControlNamePrefix: string;
       aRttiProperties: TArray<TRttiProperty>); override;
   end;
 
   TBind = class
   public
-    class function GetBindItem<T: class>(aSource: TObject): TBindItem; overload;
-    class function GetBindItem(aControl: TControl): TBindItem; overload;
-    class function GetSource<T: class>(aControl: TControl): T;
+    //class function GetBindItem<T: class>(aSource: TObject): TBindItem; overload;
+    //class function GetBindItem(aControl: TControl): TBindItem; overload;
+    //class function GetSource<T: class>(aControl: TControl): T;
+
+    class function GetSelectedSource<T: class>(aControl: TControl): T;
     class procedure Bind(aSource: TObject; aRootControl: TObject; const aControlNamePrefix: string = '');
+    class procedure BindToListControl(aSource: TObject; aControl: TObject);
+    class procedure ClearControl(aControl: TObject);
     class procedure Notify(aSource: TObject);
-    class procedure SingleBind(aSource: TObject; aControl: TObject);
   end;
 
 var
@@ -54,12 +60,12 @@ begin
   gBindingVCL.Bind(aSource, aRootControl, aControlNamePrefix);
 end;
 
-class function TBind.GetBindItem(aControl: TControl): TBindItem;
+{class function TBind.GetBindItem(aControl: TControl): TBindItem;
 begin
   Result := gBindingVCL.GetFirstBindItem(aControl);
-end;
+end;  }
 
-class function TBind.GetBindItem<T>(aSource: TObject): TBindItem;
+{class function TBind.GetBindItem<T>(aSource: TObject): TBindItem;
 var
   BindItem: TBindItem;
   BindItems: TArray<TBindItem>;
@@ -68,21 +74,38 @@ begin
   for BindItem in BindItems do
     if BindItem.Control.ClassType = T then
       Exit(BindItem);
-end;
+end;}
 
-class function TBind.GetSource<T>(aControl: TControl): T;
+{class function TBind.GetSource<T>(aControl: TControl): T;
 begin
   Result := GetBindItem(aControl).Source as T;
-end;
+end; }
 
 class procedure TBind.Notify(aSource: TObject);
 begin
   gBindingVCL.Notify(aSource);
 end;
 
-class procedure TBind.SingleBind(aSource: TObject; aControl: TObject);
+class procedure TBind.BindToListControl(aSource: TObject; aControl: TObject);
 begin
-  gBindingVCL.SingleBind(aSource, aControl);
+  gBindingVCL.BindToListControl(aSource, aControl);
+end;
+
+class procedure TBind.ClearControl(aControl: TObject);
+begin
+  gBindingVCL.ClearControl(aControl);
+
+  // TStringGrid specific behaviar
+  if aControl is TStringGrid then
+    TStringGrid(aControl).Objects[0, 0] := nil;
+end;
+
+class function TBind.GetSelectedSource<T>(aControl: TControl): T;
+begin
+  if aControl is TStringGrid then
+    Result := TStringGrid(aControl).Objects[0, TStringGrid(aControl).Row] as T
+  else
+    raise Exception.CreateFmt('TBind.GetSelectedSource: Control class %s does not supported', [aControl.ClassName]);
 end;
 
 { TBindingVCL }
@@ -92,6 +115,10 @@ procedure TBindingVCL.BindPropertyToControl(aSource: TObject;
 var
   BindItem: TBindItem;
 begin
+  inherited;
+  if FBindItemAlreadyExists then
+    Exit;
+
   if Assigned(aRttiProperty) then
     BindItem := AddBindItem(aSource, aRttiProperty.Name, aControl)
   else
@@ -112,6 +139,9 @@ begin
   if aControl is TTreeNode then
     SetToTreeNode(TTreeNode(aControl), BindItem)
   else
+  if aControl is TStringGrid then
+    SetToStringGrid(TStringGrid(aControl), BindItem)
+  else
     raise Exception.CreateFmt('TBindingVCL: Control class %s does not supported', [aControl.ClassName]);
 end;
 
@@ -123,7 +153,7 @@ var
   i: Integer;
   RttiProperty: TRttiProperty;
 begin
-  if aControl is TWinControl then
+  if (aControl is TWinControl) and (Length(aRttiProperties) > 0) then
   begin
     Control := aControl as TWinControl;
 
@@ -137,11 +167,13 @@ begin
         DoBind(aSource, ChildControl, aControlNamePrefix, aRttiProperties);
 
       RttiProperty := GetMatchedSourceProperty(aControlNamePrefix, ChildControl.Name, aRttiProperties);
-      BindPropertyToControl(aSource, RttiProperty, ChildControl);
+      if Assigned(RttiProperty) then
+        BindPropertyToControl(aSource, RttiProperty, ChildControl);
     end;
 
     RttiProperty := GetMatchedSourceProperty(aControlNamePrefix, Control.Name, aRttiProperties);
-    BindPropertyToControl(aSource, RttiProperty, Control);
+    if Assigned(RttiProperty) then
+      BindPropertyToControl(aSource, RttiProperty, Control);
   end
   else
     BindPropertyToControl(aSource, nil, aControl);
@@ -195,6 +227,16 @@ begin
     SetNativeEvent(aRichEdit, TMethod(aRichEdit.OnChange));
 
   aRichEdit.OnChange := EditOnChange;
+end;
+
+procedure TBindingVCL.SetToStringGrid(aStringGrid: TStringGrid; var aBindItem: TBindItem);
+var
+  Row: Integer;
+begin
+  Row := Length(GetBindItemsByControl(aStringGrid)) - 1;
+  aStringGrid.RowCount := Row + 1;
+
+  aStringGrid.Objects[0, Row] := aBindItem.Source;
 end;
 
 procedure TBindingVCL.SetToTreeNode(aTreeNode: TTreeNode;
