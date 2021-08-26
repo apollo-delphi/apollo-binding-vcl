@@ -18,8 +18,8 @@ uses
   DUnitX.TestFramework,
   tstApollo_BindingVCL in 'tstApollo_BindingVCL.pas',
   Apollo_BindingVCL in 'Apollo_BindingVCL.pas',
-  Apollo_Binding_Core in '..\Vendors\Apollo_Binding_Core\Apollo_Binding_Core.pas',
-  Apollo_Types in '..\Vendors\Apollo_Types\Apollo_Types.pas';
+  Apollo_Types in '..\Vendors\Apollo_Types\Apollo_Types.pas',
+  Apollo_Binding_Core in '..\Vendors\Apollo_Binding_Core\Apollo_Binding_Core.pas';
 
 begin
   Application.Initialize;

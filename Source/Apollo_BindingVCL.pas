@@ -1,4 +1,4 @@
-unit Apollo_Binding_VCL;
+unit Apollo_BindingVCL;
 
 interface
 
@@ -13,10 +13,14 @@ uses
 type
   TBindingVCL = class(TBindingEngine)
   private
+    function GetControlItem(aControl, aSource: TObject): TObject;
+    function GetControlItemFromTreeView(aTreeView: TTreeView; aSource: TObject): TTreeNode;
     function GetSourceFromStringGrid(aStringGrid: TStringGrid): TObject;
+    function GetSourceFromTreeView(aTreeView: TTreeView): TObject;
     procedure ApplyToLabeledEdit(aLabeledEdit: TLabeledEdit; aBindItem: TBindItem; const aValue: string);
     procedure ApplyToRichEdit(aRichEdit: TRichEdit; aBindItem: TBindItem; const aValue: string);
     procedure ApplyToStringGrid(aStringGrid: TStringGrid; aBindItem: TBindItem);
+    procedure ApplyToTreeView(aTreeView: TTreeView; aBindItem: TBindItem; aParentNode: TTreeNode);
     procedure EditOnChange(Sender: TObject);
   protected
     function GetSourceFromControl(aControl: TObject): TObject; override;
@@ -28,6 +32,8 @@ type
   TBind = record
   public
     class function BindToControlItem(aSource: TObject; aControl: TObject): Integer; static;
+    class function BindToControlNode<T: class>(aSource: TObject; aControl: TObject; aParentNode: T): T; static;
+    class function GetControlItemOrNode<T: class>(aControl, aSource: TObject): T; static;
     class function GetSource<T: class>(aControl: TObject): T; static;
     class procedure Bind(aSource: TObject; aRootControl: TObject; const aControlNamePrefix: string = ''); static;
     class procedure ClearControl(aControl: TObject); static;
@@ -58,6 +64,11 @@ begin
   Result := gBindingVCL.BindToControlItem(aSource, aControl);
 end;
 
+class function TBind.BindToControlNode<T>(aSource: TObject; aControl: TObject; aParentNode: T): T;
+begin
+  Result := gBindingVCL.BindToControlItem(aSource, aControl, aParentNode) as T;
+end;
+
 class procedure TBind.ClearControl(aControl: TObject);
 var
   i: Integer;
@@ -77,6 +88,11 @@ begin
   RemoveBind(aControl);
 end;
 
+class function TBind.GetControlItemOrNode<T>(aControl, aSource: TObject): T;
+begin
+  Result := gBindingVCL.GetControlItem(aControl, aSource) as T;
+end;
+
 class function TBind.GetSource<T>(aControl: TObject): T;
 var
   Source: TObject;
@@ -89,7 +105,7 @@ begin
   if Source is T then
     Result := Source as T
   else
-    raise Exception.CreateFmt('TBind.GetSource: source binded with control %s is not %s type', [aControl.ClassName, T.ClassName]);
+    Result := nil;
 end;
 
 class procedure TBind.RemoveBind(aControl: TObject);
@@ -115,6 +131,9 @@ begin
   else
   if Control.InheritsFrom(TRichEdit) then
     ApplyToRichEdit(TRichEdit(Control), aBindItem, aRttiProperty.GetValue(Source).AsString)
+  else
+  if Control.InheritsFrom(TTreeView) then
+    ApplyToTreeView(TTreeView(Control), aBindItem, TTreeNode(FControlParentItem))
   else
     raise Exception.CreateFmt('TBindingVCL: Control class %s does not supported', [Control.ClassName]);
 end;
@@ -171,6 +190,19 @@ begin
   SetLastBindedControlItemIndex(Index);
 end;
 
+procedure TBindingVCL.ApplyToTreeView(aTreeView: TTreeView;
+  aBindItem: TBindItem; aParentNode: TTreeNode);
+var
+  TreeNode: TTreeNode;
+begin
+  if Assigned(aParentNode) then
+    TreeNode := aTreeView.Items.AddChildObject(aParentNode, '', aBindItem.Source)
+  else
+    TreeNode := aTreeView.Items.AddObject(nil, '', aBindItem.Source);
+
+  SetLastBindedControlItem(TreeNode);
+end;
+
 procedure TBindingVCL.EditOnChange(Sender: TObject);
 var
   BindItem: TBindItem;
@@ -189,10 +221,53 @@ begin
   end;
 end;
 
+function TBindingVCL.GetControlItem(aControl, aSource: TObject): TObject;
+begin
+  if aControl.InheritsFrom(TTreeView) then
+    Result := GetControlItemFromTreeView(TTreeView(aControl), aSource)
+  else
+    raise Exception.CreateFmt('TBindingVCL.GetControlItem: Control class %s does not support', [aControl.ClassName]);
+end;
+
+function TBindingVCL.GetControlItemFromTreeView(aTreeView: TTreeView;
+  aSource: TObject): TTreeNode;
+
+  function FindInItem(aItem: TTreeNode): TTreeNode;
+  var
+    i: Integer;
+  begin
+    Result := nil;
+
+    for i := 0 to aItem.Count - 1 do
+    begin
+      if aItem.Item[i].Data = Pointer(aSource) then
+        Exit(aItem.Item[i]);
+
+      Result := FindInItem(aItem.Item[i]);
+    end;
+  end;
+
+var
+  i: Integer;
+begin
+  Result := nil;
+
+  for i := 0 to aTreeView.Items.Count - 1 do
+  begin
+    if aTreeView.Items.Item[i].Data = Pointer(aSource) then
+      Exit(aTreeView.Items.Item[i]);
+
+    Result := FindInItem(aTreeView.Items.Item[i]);
+  end;
+end;
+
 function TBindingVCL.GetSourceFromControl(aControl: TObject): TObject;
 begin
   if aControl is TStringGrid then
     Result := GetSourceFromStringGrid(TStringGrid(aControl))
+  else
+  if aControl.InheritsFrom(TTreeView) then
+    Result := GetSourceFromTreeView(TTreeView(aControl))
   else
     raise Exception.CreateFmt('TBindingVCL.GetSourceFromControl: Control class %s does not support', [aControl.ClassName]);
 end;
@@ -200,6 +275,14 @@ end;
 function TBindingVCL.GetSourceFromStringGrid(aStringGrid: TStringGrid): TObject;
 begin
   Result := aStringGrid.Objects[0, aStringGrid.Row];
+end;
+
+function TBindingVCL.GetSourceFromTreeView(aTreeView: TTreeView): TObject;
+begin
+  if Assigned(aTreeView.Selected) then
+    Result := aTreeView.Selected.Data
+  else
+    Result := nil;
 end;
 
 function TBindingVCL.IsValidControl(aControl: TObject; out aControlName: string;
