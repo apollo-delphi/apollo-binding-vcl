@@ -15,8 +15,10 @@ type
   private
     function GetControlItem(aControl, aSource: TObject): TObject;
     function GetControlItemFromTreeView(aTreeView: TTreeView; aSource: TObject): TTreeNode;
+    function GetSourceFromComboBox(aComboBox: TComboBox): TObject;
     function GetSourceFromStringGrid(aStringGrid: TStringGrid): TObject;
     function GetSourceFromTreeView(aTreeView: TTreeView): TObject;
+    procedure ApplyToComboBox(aComboBox: TComboBox; aBindItem: TBindItem);
     procedure ApplyToLabeledEdit(aLabeledEdit: TLabeledEdit; aBindItem: TBindItem; const aValue: string);
     procedure ApplyToRichEdit(aRichEdit: TRichEdit; aBindItem: TBindItem; const aValue: string);
     procedure ApplyToStringGrid(aStringGrid: TStringGrid; aBindItem: TBindItem);
@@ -35,6 +37,7 @@ type
     class function BindToControlNode<T: class>(aSource: TObject; aControl: TObject; aParentNode: T): T; static;
     class function GetControlItemOrNode<T: class>(aControl, aSource: TObject): T; static;
     class function GetSource<T: class>(aControl: TObject): T; static;
+    class function HasSource(aControl: TObject): Boolean; static;
     class procedure Bind(aSource: TObject; aRootControl: TObject; const aControlNamePrefix: string = ''); static;
     class procedure ClearControl(aControl: TObject); static;
     class procedure RemoveBind(aControl: TObject); static;
@@ -72,15 +75,22 @@ end;
 class procedure TBind.ClearControl(aControl: TObject);
 var
   i: Integer;
+  Index: Integer;
   StringGrid: TStringGrid;
 begin
-  if aControl is TStringGrid then
+  if aControl.InheritsFrom(TStringGrid) then
   begin
     StringGrid := TStringGrid(aControl);
-    StringGrid.RowCount := 1;
+    Index := StringGrid.FixedRows;
+    StringGrid.RowCount := Index + 1;
     for i := 0 to StringGrid.ColCount - 1 do
-      StringGrid.Cells[i, 0] := '';
-    StringGrid.Objects[0, 0] := nil;
+      StringGrid.Cells[i, Index] := '';
+    StringGrid.Objects[0, Index] := nil;
+  end
+  else
+  if aControl.InheritsFrom(TComboBox) then
+  begin
+    TComboBox(aControl).Clear;
   end
   else
     raise Exception.CreateFmt('TBind.ClearControl: Control %s is not support', [aControl.ClassName]);
@@ -108,12 +118,29 @@ begin
     Result := nil;
 end;
 
+class function TBind.HasSource(aControl: TObject): Boolean;
+var
+  Source: TObject;
+begin
+  Source := gBindingVCL.GetSource(aControl);
+  Result := Assigned(Source);
+end;
+
 class procedure TBind.RemoveBind(aControl: TObject);
 begin
   gBindingVCL.RemoveBind(aControl);
 end;
 
 { TBindingVCL }
+
+procedure TBindingVCL.ApplyToComboBox(aComboBox: TComboBox;
+  aBindItem: TBindItem);
+var
+  Index: Integer;
+begin
+  Index := aComboBox.Items.AddObject('', aBindItem.Source);
+  SetLastBindedControlItemIndex(Index);
+end;
 
 procedure TBindingVCL.ApplyToControls(aBindItem: TBindItem; aRttiProperty: TRttiProperty);
 var
@@ -135,7 +162,10 @@ begin
   if Control.InheritsFrom(TTreeView) then
     ApplyToTreeView(TTreeView(Control), aBindItem, TTreeNode(FControlParentItem))
   else
-    raise Exception.CreateFmt('TBindingVCL: Control class %s does not supported', [Control.ClassName]);
+  if Control.InheritsFrom(TComboBox) then
+    ApplyToComboBox(TComboBox(Control), aBindItem)
+  else
+    raise Exception.CreateFmt('TBindingVCL: Control class %s does not support.', [Control.ClassName]);
 end;
 
 procedure TBindingVCL.ApplyToLabeledEdit(aLabeledEdit: TLabeledEdit;
@@ -163,6 +193,7 @@ end;
 procedure TBindingVCL.ApplyToStringGrid(aStringGrid: TStringGrid;
   aBindItem: TBindItem);
 var
+  FirstDataRow: Integer;
   RowCount: Integer;
   i: Integer;
   Index: Integer;
@@ -170,8 +201,9 @@ begin
   Index := -1;
   if aBindItem.New then
   begin
-    if aStringGrid.Objects[0, 0] = nil then
-      RowCount := 1
+    FirstDataRow := aStringGrid.FixedRows;
+    if aStringGrid.Objects[0, FirstDataRow] = nil then
+      RowCount := FirstDataRow + 1
     else
       RowCount := aStringGrid.RowCount + 1;
 
@@ -261,6 +293,11 @@ begin
   end;
 end;
 
+function TBindingVCL.GetSourceFromComboBox(aComboBox: TComboBox): TObject;
+begin
+  Result := aComboBox.Items.Objects[aComboBox.ItemIndex];
+end;
+
 function TBindingVCL.GetSourceFromControl(aControl: TObject): TObject;
 begin
   if aControl is TStringGrid then
@@ -268,6 +305,9 @@ begin
   else
   if aControl.InheritsFrom(TTreeView) then
     Result := GetSourceFromTreeView(TTreeView(aControl))
+  else
+  if aControl.InheritsFrom(TComboBox) then
+    Result := GetSourceFromComboBox(TComboBox(aControl))
   else
     raise Exception.CreateFmt('TBindingVCL.GetSourceFromControl: Control class %s does not support', [aControl.ClassName]);
 end;
