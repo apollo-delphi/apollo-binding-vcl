@@ -18,12 +18,16 @@ type
     function GetSourceFromComboBox(aComboBox: TComboBox): TObject;
     function GetSourceFromStringGrid(aStringGrid: TStringGrid): TObject;
     function GetSourceFromTreeView(aTreeView: TTreeView): TObject;
-    procedure ApplyToComboBox(aComboBox: TComboBox; aBindItem: TBindItem);
+    procedure ApplyToComboBox(aComboBox: TComboBox; aBindItem: TBindItem; aRttiProperty: TRttiProperty);
+    procedure ApplyToDateTimePicker(aPicker: TDateTimePicker; aBindItem: TBindItem; const aValue: TDateTime);
+    procedure ApplyToEdit(aEdit: TEdit; aBindItem: TBindItem; const aValue: string);
     procedure ApplyToLabeledEdit(aLabeledEdit: TLabeledEdit; aBindItem: TBindItem; const aValue: string);
     procedure ApplyToRichEdit(aRichEdit: TRichEdit; aBindItem: TBindItem; const aValue: string);
     procedure ApplyToStringGrid(aStringGrid: TStringGrid; aBindItem: TBindItem);
     procedure ApplyToTreeView(aTreeView: TTreeView; aBindItem: TBindItem; aParentNode: TTreeNode);
+    procedure DateTimePickerOnChange(Sender: TObject);
     procedure EditOnChange(Sender: TObject);
+    procedure EditOnCloseUp(Sender: TObject);
   protected
     function GetSourceFromControl(aControl: TObject): TObject; override;
     function IsValidControl(aControl: TObject; out aControlName: string;
@@ -52,6 +56,7 @@ uses
   System.Classes,
   System.SysUtils,
   System.TypInfo,
+  System.Variants,
   Vcl.Controls;
 
 { TBind }
@@ -134,12 +139,65 @@ end;
 { TBindingVCL }
 
 procedure TBindingVCL.ApplyToComboBox(aComboBox: TComboBox;
-  aBindItem: TBindItem);
+  aBindItem: TBindItem; aRttiProperty: TRttiProperty);
 var
+  ControlName: string;
+  i: Integer;
   Index: Integer;
+  Prop: string;
+  Props: TArray<string>;
+  ReferObject: TObject;
+  ReferProp: string;
+  ReferValue: Variant;
+  Value: Variant;
 begin
-  Index := aComboBox.Items.AddObject('', aBindItem.Source);
-  SetLastBindedControlItemIndex(Index);
+  if not Assigned(aRttiProperty) then
+  begin
+    Index := aComboBox.Items.AddObject('', aBindItem.Source);
+    SetLastBindedControlItemIndex(Index);
+  end
+  else
+  begin
+    ControlName := aComboBox.Name;
+
+    if ControlName.Contains('_') then
+    begin
+      Props := ControlName.Split(['_']);
+      Prop := Props[2];
+      Value := GetRttiProperty(aBindItem.Source, Prop).GetValue(aBindItem.Source).AsVariant;
+
+      ReferProp := Props[1];
+      for i := 0 to aComboBox.Items.Count - 1 do
+      begin
+        ReferObject := aComboBox.Items.Objects[i];
+        ReferValue := GetRttiProperty(ReferObject, ReferProp).GetValue(ReferObject).AsVariant;
+
+        if ReferValue = Value then
+        begin
+          aComboBox.ItemIndex := i;
+          Break;
+        end;
+      end
+    end
+    else
+    begin
+      Value := GetRttiProperty(aBindItem.Source, aBindItem.PropName).GetValue(aBindItem.Source).AsVariant;
+
+      for i := 0 to aComboBox.Items.Count - 1 do
+      begin
+        ReferValue := Integer(aComboBox.Items.Objects[i]);
+
+        if ReferValue = Value then
+        begin
+          aComboBox.ItemIndex := i;
+          Break;
+        end;
+      end;
+    end;
+
+    SetNativeEvent(aBindItem.New, aComboBox, TMethod(aComboBox.OnCloseUp));
+    aComboBox.OnCloseUp := EditOnCloseUp;
+  end;
 end;
 
 procedure TBindingVCL.ApplyToControls(aBindItem: TBindItem; aRttiProperty: TRttiProperty);
@@ -151,7 +209,10 @@ begin
   Source := aBindItem.Source;
 
   if Control.InheritsFrom(TLabeledEdit) then
-    ApplyToLabeledEdit(TLabeledEdit(Control), aBindItem, aRttiProperty.GetValue(Source).AsString)
+    ApplyToLabeledEdit(TLabeledEdit(Control), aBindItem, PropertyValToStr(aRttiProperty, Source))
+  else
+  if Control.InheritsFrom(TEdit) then
+    ApplyToEdit(TEdit(Control), aBindItem, PropertyValToStr(aRttiProperty, Source))
   else
   if Control.InheritsFrom(TStringGrid) then
     ApplyToStringGrid(TStringGrid(Control), aBindItem)
@@ -163,9 +224,32 @@ begin
     ApplyToTreeView(TTreeView(Control), aBindItem, TTreeNode(FControlParentItem))
   else
   if Control.InheritsFrom(TComboBox) then
-    ApplyToComboBox(TComboBox(Control), aBindItem)
+    ApplyToComboBox(TComboBox(Control), aBindItem, aRttiProperty)
+  else
+  if Control.InheritsFrom(TDrawGrid) then
+  else
+  if Control.InheritsFrom(TDateTimePicker) then
+    ApplyToDateTimePicker(TDateTimePicker(Control), aBindItem, aRttiProperty.GetValue(Source).AsExtended)
   else
     raise Exception.CreateFmt('TBindingVCL: Control class %s does not support.', [Control.ClassName]);
+end;
+
+procedure TBindingVCL.ApplyToDateTimePicker(aPicker: TDateTimePicker;
+  aBindItem: TBindItem; const aValue: TDateTime);
+begin
+  aPicker.DateTime := aValue;
+
+  SetNativeEvent(aBindItem.New, aPicker, TMethod(aPicker.OnChange));
+  aPicker.OnChange := DateTimePickerOnChange;
+end;
+
+procedure TBindingVCL.ApplyToEdit(aEdit: TEdit; aBindItem: TBindItem;
+  const aValue: string);
+begin
+  aEdit.Text := aValue;
+
+  SetNativeEvent(aBindItem.New, aEdit, TMethod(aEdit.OnChange));
+  aEdit.OnChange := EditOnChange;
 end;
 
 procedure TBindingVCL.ApplyToLabeledEdit(aLabeledEdit: TLabeledEdit;
@@ -173,9 +257,7 @@ procedure TBindingVCL.ApplyToLabeledEdit(aLabeledEdit: TLabeledEdit;
 begin
   aLabeledEdit.Text := aValue;
 
-  if Assigned(aLabeledEdit.OnChange) then
-    SetNativeEvent(aLabeledEdit, TMethod(aLabeledEdit.OnChange));
-
+  SetNativeEvent(aBindItem.New, aLabeledEdit, TMethod(aLabeledEdit.OnChange));
   aLabeledEdit.OnChange := EditOnChange;
 end;
 
@@ -184,9 +266,7 @@ procedure TBindingVCL.ApplyToRichEdit(aRichEdit: TRichEdit;
 begin
   aRichEdit.Text := aValue;
 
-  if Assigned(aRichEdit.OnChange) then
-    SetNativeEvent(aRichEdit, TMethod(aRichEdit.OnChange));
-
+  SetNativeEvent(aBindItem.New, aRichEdit, TMethod(aRichEdit.OnChange));
   aRichEdit.OnChange := EditOnChange;
 end;
 
@@ -235,18 +315,84 @@ begin
   SetLastBindedControlItem(TreeNode);
 end;
 
+procedure TBindingVCL.DateTimePickerOnChange(Sender: TObject);
+var
+  BindItem: TBindItem;
+  Method: TMethod;
+  NotifyEvent: TNotifyEvent;
+  Picker: TDateTimePicker;
+begin
+  Picker := Sender as TDateTimePicker;
+  BindItem := GetFirstBindItemHavingProp(Picker);
+
+  SetPropValue(BindItem.Source, BindItem.PropName, Picker.DateTime);
+
+  if TryGetNativeEvent(Picker, Method) then
+  begin
+    TMethod(NotifyEvent) := Method;
+    NotifyEvent(Sender);
+  end;
+end;
+
 procedure TBindingVCL.EditOnChange(Sender: TObject);
 var
   BindItem: TBindItem;
   Edit: TCustomEdit;
   Method: TMethod;
   NotifyEvent: TNotifyEvent;
+  Value: Variant;
+  RttiContext: TRttiContext;
+  RttiProperty: TRttiProperty;
 begin
   Edit := Sender as TCustomEdit;
-  BindItem := GetFirstBindItem(Edit);
-  SetPropValue(BindItem.Source, BindItem.PropName, Edit.Text);
+  BindItem := GetFirstBindItemHavingProp(Edit);
 
-  if TryGetNativeEvent(Edit, Method) then
+  RttiContext := TRttiContext.Create;
+  try
+    RttiProperty := GetRttiProperty(BindItem.Source, BindItem.PropName);
+    Value := StrToPropertyVal(RttiProperty, Edit.Text);
+    RttiProperty.SetValue(BindItem.Source, TValue.FromVariant(Value));
+  finally
+    RttiContext.Free;
+  end;
+
+  if TryGetNativeEvent(Edit, {out}Method) then
+  begin
+    TMethod(NotifyEvent) := Method;
+    NotifyEvent(Sender);
+  end;
+end;
+
+procedure TBindingVCL.EditOnCloseUp(Sender: TObject);
+var
+  BindItem: TBindItem;
+  ComboBox: TCustomComboBox;
+  Method: TMethod;
+  NotifyEvent: TNotifyEvent;
+  RttiContext: TRttiContext;
+  RttiProperty: TRttiProperty;
+begin
+  ComboBox := Sender as TCustomComboBox;
+
+  if ComboBox.ItemIndex > -1 then
+  begin
+    BindItem := GetFirstBindItemHavingProp(ComboBox);
+    RttiContext := TRttiContext.Create;
+    try
+      RttiProperty := GetRttiProperty(BindItem.Source, BindItem.PropName);
+
+      if RttiProperty.PropertyType.IsInstance then
+        RttiProperty.SetValue(BindItem.Source, ComboBox.Items.Objects[ComboBox.ItemIndex])
+      else
+      if RttiProperty.PropertyType.IsOrdinal then
+        RttiProperty.SetValue(BindItem.Source, TValue.FromOrdinal(RttiProperty.PropertyType.Handle,
+          Integer(ComboBox.Items.Objects[ComboBox.ItemIndex])));
+    finally
+      RttiContext.Free;
+    end;
+  end;
+
+  if TryGetNativeEvent(ComboBox, {out}Method) then
   begin
     TMethod(NotifyEvent) := Method;
     NotifyEvent(Sender);
@@ -338,8 +484,12 @@ begin
     aControlName := Control.Name;
 
     aChildControls := [];
-    for i := 0 to Control.ControlCount - 1 do
-      aChildControls := aChildControls + [Control.Controls[i]];
+    if Control.ControlCount > 0 then
+    begin
+      Result := False;
+      for i := 0 to Control.ControlCount - 1 do
+        aChildControls := aChildControls + [Control.Controls[i]];
+    end;
   end
   else
     Result := False;
