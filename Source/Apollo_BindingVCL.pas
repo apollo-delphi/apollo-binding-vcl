@@ -37,14 +37,17 @@ type
 
   TBind = record
   public
-    class function BindToControlItem(aSource: TObject; aControl: TObject): Integer; static;
+    class function BindToControlItem(aSource: TObject; aControl: TObject; aPopulateProc: TPopulateProc): Integer; static;
     class function BindToControlNode<T: class>(aSource: TObject; aControl: TObject; aParentNode: T): T; static;
     class function GetControlItemOrNode<T: class>(aControl, aSource: TObject): T; static;
     class function GetSource<T: class>(aControl: TObject): T; static;
     class function HasSource(aControl: TObject): Boolean; static;
     class procedure Bind(aSource: TObject; aRootControl: TObject; const aControlNamePrefix: string = ''); static;
     class procedure ClearControl(aControl: TObject); static;
+    class procedure Notify(aSource: TObject); static;
     class procedure RemoveBind(aControl: TObject); static;
+    class procedure SubscribeNotification(aSource: TObject; aNotifySourceType: TClass;
+      const aKeyPropName: string; const aKeyPropValue: Variant); static;
   end;
 
 var
@@ -67,9 +70,9 @@ begin
   gBindingVCL.Bind(aSource, aRootControl, aControlNamePrefix);
 end;
 
-class function TBind.BindToControlItem(aSource, aControl: TObject): Integer;
+class function TBind.BindToControlItem(aSource, aControl: TObject; aPopulateProc: TPopulateProc): Integer;
 begin
-  Result := gBindingVCL.BindToControlItem(aSource, aControl);
+  Result := gBindingVCL.BindToControlItem(aSource, aControl, aPopulateProc);
 end;
 
 class function TBind.BindToControlNode<T>(aSource: TObject; aControl: TObject; aParentNode: T): T;
@@ -131,9 +134,20 @@ begin
   Result := Assigned(Source);
 end;
 
+class procedure TBind.Notify(aSource: TObject);
+begin
+  gBindingVCL.Notify(aSource);
+end;
+
 class procedure TBind.RemoveBind(aControl: TObject);
 begin
   gBindingVCL.RemoveBind(aControl);
+end;
+
+class procedure TBind.SubscribeNotification(aSource: TObject; aNotifySourceType: TClass;
+  const aKeyPropName: string; const aKeyPropValue: Variant);
+begin
+  gBindingVCL.SubscribeNotification(aSource, aNotifySourceType, aKeyPropName, aKeyPropValue);
 end;
 
 { TBindingVCL }
@@ -283,12 +297,13 @@ begin
   begin
     FirstDataRow := aStringGrid.FixedRows;
     if aStringGrid.Objects[0, FirstDataRow] = nil then
-      RowCount := FirstDataRow + 1
+      Index := FirstDataRow
     else
+    begin
       RowCount := aStringGrid.RowCount + 1;
-
-    aStringGrid.RowCount := RowCount;
-    Index := RowCount - 1;
+      aStringGrid.RowCount := RowCount;
+      Index := RowCount - 1;
+    end;
     aStringGrid.Objects[0, Index] := aBindItem.Source;
   end
   else
@@ -477,16 +492,18 @@ var
   Control: TWinControl;
   i: Integer;
 begin
-  if aControl.InheritsFrom((TWinControl) ) then
+  if aControl.InheritsFrom(TWinControl) then
   begin
-    Result := True;
+    if aControl.InheritsFrom(TPanel) then
+      Result := False
+    else
+      Result := True;
     Control := aControl as TWinControl;
     aControlName := Control.Name;
 
     aChildControls := [];
     if Control.ControlCount > 0 then
     begin
-      Result := False;
       for i := 0 to Control.ControlCount - 1 do
         aChildControls := aChildControls + [Control.Controls[i]];
     end;
