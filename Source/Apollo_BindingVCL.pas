@@ -27,7 +27,7 @@ type
     procedure ApplyToTreeView(aTreeView: TTreeView; aBindItem: TBindItem; aParentNode: TTreeNode);
     procedure DateTimePickerOnChange(Sender: TObject);
     procedure EditOnChange(Sender: TObject);
-    procedure EditOnCloseUp(Sender: TObject);
+    //procedure EditOnCloseUp(Sender: TObject);
   protected
     function GetSourceFromControl(aControl: TObject): TObject; override;
     function IsValidControl(aControl: TObject; out aControlName: string;
@@ -46,8 +46,8 @@ type
     class procedure ClearControl(aControl: TObject); static;
     class procedure Notify(aSource: TObject); static;
     class procedure RemoveBind(aControl: TObject); static;
-    class procedure SubscribeNotification(aSource: TObject; aNotifySourceType: TClass;
-      const aKeyPropName: string; const aKeyPropValue: Variant); static;
+    class procedure SubscribeNotification(aSource: TObject; aReferClassType: TClass;
+      const aReferKeyPropName: string; const aKeyPropValue: Variant; aOnNotifyProc: TOnNotifyProc); static;
   end;
 
 var
@@ -98,8 +98,11 @@ begin
   else
   if aControl.InheritsFrom(TComboBox) then
   begin
-    TComboBox(aControl).Clear;
+    TComboBox(aControl).Items.Clear;
   end
+  else
+  if aControl.InheritsFrom(TCustomEdit) then
+    TCustomEdit(aControl).Text := ''
   else
     raise Exception.CreateFmt('TBind.ClearControl: Control %s is not support', [aControl.ClassName]);
 
@@ -144,17 +147,17 @@ begin
   gBindingVCL.RemoveBind(aControl);
 end;
 
-class procedure TBind.SubscribeNotification(aSource: TObject; aNotifySourceType: TClass;
-  const aKeyPropName: string; const aKeyPropValue: Variant);
+class procedure TBind.SubscribeNotification(aSource: TObject; aReferClassType: TClass;
+  const aReferKeyPropName: string; const aKeyPropValue: Variant; aOnNotifyProc: TOnNotifyProc);
 begin
-  gBindingVCL.SubscribeNotification(aSource, aNotifySourceType, aKeyPropName, aKeyPropValue);
+  gBindingVCL.SubscribeNotification(aSource, aReferClassType, aReferKeyPropName, aKeyPropValue, aOnNotifyProc);
 end;
 
 { TBindingVCL }
 
 procedure TBindingVCL.ApplyToComboBox(aComboBox: TComboBox;
   aBindItem: TBindItem; aRttiProperty: TRttiProperty);
-var
+{var
   ControlName: string;
   i: Integer;
   Index: Integer;
@@ -163,9 +166,9 @@ var
   ReferObject: TObject;
   ReferProp: string;
   ReferValue: Variant;
-  Value: Variant;
+  Value: Variant;}
 begin
-  if not Assigned(aRttiProperty) then
+  {if not Assigned(aRttiProperty) then
   begin
     Index := aComboBox.Items.AddObject('', aBindItem.Source);
     SetLastBindedControlItemIndex(Index);
@@ -211,7 +214,7 @@ begin
 
     SetNativeEvent(aBindItem.New, aComboBox, TMethod(aComboBox.OnCloseUp));
     aComboBox.OnCloseUp := EditOnCloseUp;
-  end;
+  end; }
 end;
 
 procedure TBindingVCL.ApplyToControls(aBindItem: TBindItem; aRttiProperty: TRttiProperty);
@@ -286,6 +289,15 @@ end;
 
 procedure TBindingVCL.ApplyToStringGrid(aStringGrid: TStringGrid;
   aBindItem: TBindItem);
+
+  procedure ClearRow(const aRow: Integer);
+  var
+    i: Integer;
+  begin
+    for i := 0 to aStringGrid.ColCount - 1 do
+      aStringGrid.Cells[i, aRow] := '';
+  end;
+
 var
   FirstDataRow: Integer;
   RowCount: Integer;
@@ -303,6 +315,7 @@ begin
       RowCount := aStringGrid.RowCount + 1;
       aStringGrid.RowCount := RowCount;
       Index := RowCount - 1;
+      ClearRow(Index);
     end;
     aStringGrid.Objects[0, Index] := aBindItem.Source;
   end
@@ -355,21 +368,11 @@ var
   Edit: TCustomEdit;
   Method: TMethod;
   NotifyEvent: TNotifyEvent;
-  Value: Variant;
-  RttiContext: TRttiContext;
-  RttiProperty: TRttiProperty;
 begin
   Edit := Sender as TCustomEdit;
   BindItem := GetFirstBindItemHavingProp(Edit);
 
-  RttiContext := TRttiContext.Create;
-  try
-    RttiProperty := GetRttiProperty(BindItem.Source, BindItem.PropName);
-    Value := StrToPropertyVal(RttiProperty, Edit.Text);
-    RttiProperty.SetValue(BindItem.Source, TValue.FromVariant(Value));
-  finally
-    RttiContext.Free;
-  end;
+  BindItem.SetNewValue(Edit.Text);
 
   if TryGetNativeEvent(Edit, {out}Method) then
   begin
@@ -378,8 +381,8 @@ begin
   end;
 end;
 
-procedure TBindingVCL.EditOnCloseUp(Sender: TObject);
-var
+{procedure TBindingVCL.EditOnCloseUp(Sender: TObject);
+{var
   BindItem: TBindItem;
   ComboBox: TCustomComboBox;
   Method: TMethod;
@@ -387,32 +390,36 @@ var
   RttiContext: TRttiContext;
   RttiProperty: TRttiProperty;
 begin
-  ComboBox := Sender as TCustomComboBox;
+  {ComboBox := Sender as TCustomComboBox;
 
   if ComboBox.ItemIndex > -1 then
   begin
     BindItem := GetFirstBindItemHavingProp(ComboBox);
-    RttiContext := TRttiContext.Create;
-    try
-      RttiProperty := GetRttiProperty(BindItem.Source, BindItem.PropName);
 
-      if RttiProperty.PropertyType.IsInstance then
-        RttiProperty.SetValue(BindItem.Source, ComboBox.Items.Objects[ComboBox.ItemIndex])
-      else
-      if RttiProperty.PropertyType.IsOrdinal then
-        RttiProperty.SetValue(BindItem.Source, TValue.FromOrdinal(RttiProperty.PropertyType.Handle,
-          Integer(ComboBox.Items.Objects[ComboBox.ItemIndex])));
-    finally
-      RttiContext.Free;
+    if Assigned(BindItem) then
+    begin
+      RttiContext := TRttiContext.Create;
+      try
+        RttiProperty := GetRttiProperty(BindItem.Source, BindItem.PropName);
+
+        if RttiProperty.PropertyType.IsInstance then
+          RttiProperty.SetValue(BindItem.Source, ComboBox.Items.Objects[ComboBox.ItemIndex])
+        else
+        if RttiProperty.PropertyType.IsOrdinal then
+          RttiProperty.SetValue(BindItem.Source, TValue.FromOrdinal(RttiProperty.PropertyType.Handle,
+            Integer(ComboBox.Items.Objects[ComboBox.ItemIndex])));
+      finally
+        RttiContext.Free;
+      end;
     end;
   end;
 
-  if TryGetNativeEvent(ComboBox, {out}Method) then
+  if TryGetNativeEvent(ComboBox, {out}{Method) then
   begin
     TMethod(NotifyEvent) := Method;
     NotifyEvent(Sender);
   end;
-end;
+end;  }
 
 function TBindingVCL.GetControlItem(aControl, aSource: TObject): TObject;
 begin
@@ -456,7 +463,10 @@ end;
 
 function TBindingVCL.GetSourceFromComboBox(aComboBox: TComboBox): TObject;
 begin
-  Result := aComboBox.Items.Objects[aComboBox.ItemIndex];
+  if aComboBox.ItemIndex > -1 then
+    Result := aComboBox.Items.Objects[aComboBox.ItemIndex]
+  else
+    Result := nil;
 end;
 
 function TBindingVCL.GetSourceFromControl(aControl: TObject): TObject;
