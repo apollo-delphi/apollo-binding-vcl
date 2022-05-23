@@ -42,7 +42,8 @@ type
     class function GetControlItemOrNode<T: class>(aControl, aSource: TObject): T; static;
     class function GetSource<T: class>(aControl: TObject): T; static;
     class function HasSource(aControl: TObject): Boolean; static;
-    class procedure Bind(aSource: TObject; aRootControl: TObject; const aControlNamePrefix: string = ''); static;
+    class procedure Bind(aSource: TObject; aOnNotifyProc: TOnNotifyProc); overload; static;
+    class procedure Bind(aSource: TObject; aRootControl: TObject; const aControlNamePrefix: string = ''); overload; static;
     class procedure ClearControl(aControl: TObject); static;
     class procedure Notify(aSource: TObject); static;
     class procedure RemoveBind(aControl: TObject); static;
@@ -63,6 +64,11 @@ uses
   Vcl.Controls;
 
 { TBind }
+
+class procedure TBind.Bind(aSource: TObject; aOnNotifyProc: TOnNotifyProc);
+begin
+  gBindingVCL.Bind(aSource, aOnNotifyProc);
+end;
 
 class procedure TBind.Bind(aSource, aRootControl: TObject;
   const aControlNamePrefix: string);
