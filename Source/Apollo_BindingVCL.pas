@@ -38,7 +38,8 @@ type
   TBind = record
   public
     class function BindToControlItem(aSource: TObject; aControl: TObject; aPopulateProc: TPopulateProc): Integer; static;
-    class function BindToControlNode<T: class>(aSource: TObject; aControl: TObject; aParentNode: T): T; static;
+    class function BindToControlNode<T: class>(aSource: TObject; aControl: TObject;
+      aParentNode: T; aOnNotifyProc: TOnNotifyProc = nil): T; static;
     class function GetControlItemOrNode<T: class>(aControl, aSource: TObject): T; static;
     class function GetSource<T: class>(aControl: TObject): T; static;
     class function HasSource(aControl: TObject): Boolean; static;
@@ -81,9 +82,13 @@ begin
   Result := gBindingVCL.BindToControlItem(aSource, aControl, aPopulateProc);
 end;
 
-class function TBind.BindToControlNode<T>(aSource: TObject; aControl: TObject; aParentNode: T): T;
+class function TBind.BindToControlNode<T>(aSource: TObject; aControl: TObject;
+  aParentNode: T; aOnNotifyProc: TOnNotifyProc): T;
 begin
   Result := gBindingVCL.BindToControlItem(aSource, aControl, aParentNode) as T;
+
+  if Assigned(aOnNotifyProc) then
+    SubscribeNotification(aSource, nil, '', Null, aOnNotifyProc);
 end;
 
 class procedure TBind.ClearControl(aControl: TObject);
